@@ -83,3 +83,172 @@ Forêt
          └─ OU
              ├─ Utilisateurs
              └─ Groupes
+
+
+
+#  Schéma mécanique : Flux typique d’une intrusion Red Team
+
+Voici un **processus étape-par-étape** montrant comment une attaque Red Team se déroule généralement dans un environnement Active Directory.  
+Chaque étape indique l’objectif, les techniques utilisées, les outils courants, et le résultat attendu.
+
+---
+
+## 1) Reconnaissance (Recon)
+
+**Objectif :** Identifier les hôtes, comptes et services exposés.  
+**Techniques / Outils :**  
+- Scan réseau → `Nmap`, `CrackMapExec`  
+- Enumeration LDAP → `ldapsearch`, BloodHound intake  
+- SMB / HTTP enumeration  
+
+**Résultat attendu :**  
+- Liste de machines, utilisateurs, SPN (Service Principal Names), CAs, et services exposés.
+
+** Stratégique :** Cette étape est passive ou semi-passive pour collecter un maximum d’informations sans se faire détecter.
+
+---
+
+## 2) Collecte d’utilisateurs / comptes
+
+**Objectif :** Obtenir les comptes utilisateurs à cibler pour les étapes suivantes.  
+**Techniques / Outils :**  
+- LDAP enumeration  
+- `enum4linux`  
+- CrackMapExec `users`  
+- BloodHound ingestion  
+
+**Lien stratégique :** Fournit la cible pour **Password Spraying** ou **Kerberoast**.
+
+---
+
+## 3) Password Spraying / Credential Stuffing
+
+**Objectif :** Compromettre des comptes avec des mots de passe faibles ou par réutilisation sans déclencher de lockout.  
+**Techniques / Outils :**  
+- Password spraying → `Hydra`, `CrackMapExec`, custom scripts  
+- Credential stuffing ciblé sur les comptes collectés  
+
+**Lien stratégique :** Si succès → accès initial sur une machine utilisateur.
+
+---
+
+## 4) LLMNR / NBT-NS / WPAD poisoning (initial)
+
+**Objectif :** Capturer des hashes NTLM ou provoquer des connexions qui exposent des credentials.  
+**Techniques / Outils :**  
+- `Responder`  
+- `Inveigh`  
+
+**Lien stratégique :** Souvent réalisé depuis le réseau interne après compromis d’une machine utilisateur, fournit des hashes pour **Pass-the-Hash** ou **NTLM relay**.
+
+---
+
+## 5) Credential Dumping (post-compromise)
+
+**Objectif :** Récupérer mots de passe, hashes, tickets en mémoire (LSASS) ou fichiers (NTDS.dit).  
+**Techniques / Outils :**  
+- `Mimikatz`  
+- Impacket `secretsdump.py`  
+- Snapshot tools  
+
+**Lien stratégique :** Ces credentials permettent PtH, PtT, DCSync et escalade.
+
+---
+
+## 6) Pass-the-Hash / Over-Pass-the-Hash / Pass-the-Ticket
+
+**Objectif :** Réutiliser les creds/hashes/tickets pour se déplacer latéralement sans mot de passe clair.  
+**Techniques / Outils :**  
+- Impacket tools  
+- CrackMapExec  
+- Rubeus, Mimikatz  
+
+**Lien stratégique :** Permet accès à d’autres hôtes et escalade vers des serveurs sensibles.
+
+---
+
+## 7) Kerberos attacks (Kerberoast, AS-REP Roasting, SPN scanning, Golden/Silver Tickets)
+
+**Objectif :** Extraire des secrets exploitables via Kerberos pour récupérer des passwords ou forger des tickets.  
+**Techniques / Outils :**  
+- Kerberoasting → `Get-TGS`, export TGS, crack offline  
+- AS-REP Roasting → comptes sans pre-auth  
+- Rubeus, Kerberoast scripts  
+
+**Lien stratégique :** Succès → mots de passe de services ou possibilité de forger **Silver/Golden Tickets**, accès étendu.
+
+---
+
+## 8) Escalade de privilèges locale / via vulnérabilités
+
+**Objectif :** Obtenir droits SYSTEM / admin sur une machine ou un DC.  
+**Techniques / Outils :**  
+- Exploitation vulnérabilités locales / serveur (ex. PrintNightmare)  
+- Abuse de services mal configurés / vulnérabilités non patchées  
+
+**Lien stratégique :** Escalade souvent nécessaire pour DCSync, dump NTDS, ou persistance profonde.
+
+---
+
+## 9) DCSync / DC compromise / NTDS extraction
+
+**Objectif :** Récupérer hachages de tous les comptes (escalade domain-wide).  
+**Techniques / Outils :**  
+- DCSync via comptes avec `Replicating Directory Changes` rights  
+- Extraire NTDS.dit  
+
+**Lien stratégique :** Accès quasi-total au domaine si réussi.
+
+---
+
+## 10) Persistence et abus d’ACL / AD CS / Delegation
+
+**Objectif :** Maintenir l’accès en créant des comptes, modifiant ACL, ou abusant des certificats.  
+**Techniques / Outils :**  
+- Modification DACL  
+- Création de service accounts  
+- AD CS abuse (certificats)  
+- DCShadow  
+
+**Lien stratégique :** Rend difficile la suppression de l’accès par les défenseurs.
+
+---
+
+## 11) Lateral movement & pivoting
+
+**Objectif :** Atteindre systèmes cibles (DCs, serveurs critiques).  
+**Techniques / Outils :**  
+- PsExec, WinRM/Evil-WinRM, RDP, WMI  
+- Combinaison avec PtH / PtT  
+
+**Lien stratégique :** Déplacement latéral sécurisé sans mot de passe clair.
+
+---
+
+## 12) Domain dominance (Golden / Silver Tickets)
+
+**Objectif :** Contrôle prolongé du domaine pour accès indétectable et durable.  
+**Techniques :**  
+- Golden Ticket → forge TGT avec krbtgt hash  
+- Silver Ticket → accès service ciblé  
+
+**Lien stratégique :** Persistance complète et indétectable si bien configuré.
+
+---
+
+## 13) Cleanup / exfiltration
+
+**Objectif :** Exfiltrer données et couvrir traces.  
+**Techniques / Outils :**  
+- Exfiltration via tunnels, proxy, SOCKS  
+- Suppression des logs  
+- Extraction de données métiers (NTDS, fichiers sensibles)  
+
+**Lien stratégique :** Finaliser la mission et réduire les chances d’être détecté.
+
+---
+
+### 💡 Astuce pour les débutants :
+- Chaque étape construit sur la précédente → comprendre le **flux logique** aide à anticiper les prochaines actions.  
+- Toujours commencer par la **reconnaissance passive** pour éviter de déclencher les alertes.  
+- Note les outils utilisés pour chaque étape → utile pour ton “checklist Red Team” sur GitHub.
